@@ -35,6 +35,9 @@ private:
     const unsigned ghrMask;
     const unsigned pathLength;
     int use_alt; // min:0 max: 15
+    int reset_counter;
+    std::vector<TheISA::PCState> previous_target;
+    std::vector<std::vector<TheISA::PCState> >base_predictor;
     struct IPredEntry {
         IPredEntry() : tag(0), target(0), counter(0), useful(0) {}
         Addr tag;

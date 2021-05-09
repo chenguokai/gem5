@@ -12,16 +12,26 @@ ITTAGE::ITTAGE(
         : IndirectPredictor(params),
           numPredictors(params.numPredictors),
           ghrNumBits(params.indirectGHRBits),
+          numTageBits(params.indirectTageBits),
           ghrMask((1 << params.indirectGHRBits)-1)
 {
     threadInfo.resize(params.numThreads);
 
     targetCache.resize(params.numThreads);
-    for (unsigned i = 0; i < numSets; i++) {
+    previous_target.resize(params.numThreads);
+    base_predictor.resize(params.numThreads);
+    for (unsigned int i = 0; i < params.numThreads; ++i) {
+        base_predictor[i].resize(1 << numTageBits);
+    }
+
+    for (unsigned i = 0; i < params.numThreads; i++) {
         targetCache[i].resize(numPredictors);
+        for (unsigned j = 0; j < numPredictors; ++j) {
+            targetCache[i][j].resize((1 << 8));
+        }
     }
     use_alt = 8;
-
+    reset_counter = 128;
     fatal_if(ghrNumBits > (sizeof(ThreadInfo::ghr)*8), "ghr_size is too big");
 }
 
@@ -45,8 +55,7 @@ ITTAGE::updateDirectionInfo(
 }
 
 void
-ITTAGE::changeDirectionPrediction(ThreadID tid,
-                                                   void * indirect_history, bool actually_taken)
+ITTAGE::changeDirectionPrediction(ThreadID tid, void * indirect_history, bool actually_taken)
 {
     unsigned * previousGhr = static_cast<unsigned *>(indirect_history);
     threadInfo[tid].ghr = ((*previousGhr) << 1) + actually_taken;
@@ -56,7 +65,7 @@ ITTAGE::changeDirectionPrediction(ThreadID tid,
 }
 
 bool
-ITTAGE::lookup_helper(Addr br_addr, TheISA::PCState& target, ThreadID tid, int &predictor, int &predictor_index)
+ITTAGE::lookup_helper(Addr br_addr, TheISA::PCState& target, TheISA::PCState& alt_target,ThreadID tid, int &predictor, int &predictor_index, int &alt_predictor, int &alt_predictor_index, int &pred_count, bool &use_alt)
 {
     // todo: adjust according to ITTAGE
     DPRINTF(Indirect, "Looking up %x (set:%d)\n", br_addr, set_index);
@@ -93,25 +102,44 @@ ITTAGE::lookup_helper(Addr br_addr, TheISA::PCState& target, ThreadID tid, int &
                 targetCache[tid][predictor_1][predicotr_index_1].useful == 0 && pred_counts == 2 &&
                 targetCache[tid][predictor_2][predictor_index_2].counter > 0
         ) {
-            target = target_2;
-            predictor = predictor_2;
-            predictor_index = predictor_index_2;
+            use_alt = true;
         } else {
-            target = target_1;
-            predictor = predictor_1;
-            predictor_index = predictor_index_1;
+            use_alt = false;
         }
-        DPRINTF(Indirect, "Hit %x (target:%s)\n", br_addr, target);
+        target = target_1;
+        alt_target = target_2;
+        predictor = predictor_1;
+        predictor_index = predictor_index_1;
+        alt_predictor = predictor_2;
+        alt_predictor_index = predictor_index_2;
+        pred_count = pred_counts;
+        return true;
+    } else {
+        target = base_predictor[tid][(br_addr ^ previous_target[tid]) % (1 << numTageBits)];
+        // no need to set
+        pred_count = pred_counts;
+
         return true;
     }
-
+    // may not reach here
     DPRINTF(Indirect, "Miss %x\n", br_addr);
     return false;
 }
 
 bool ITTAGE::lookup(Addr br_addr, TheISA::PCState& target, ThreadID tid) {
-    int predictor, predictor_index; // no use
-    return lookup_helper(br_addr, target, tid, predictor, predictor_index);
+    TheISA::PCState alt_target;
+    int predictor, predictor_index, alt_predictor, alt_predictor_index, pred_count; // no use
+    bool use_alt;
+    lookup_helper(br_addr, target, alt_target, tid, predictor, predictor_index, alt_predictor, alt_predictor_index, pred_count, use_alt);
+    if (use_alt) {
+        target = alt_target;
+    }
+    if (pred_count == 0) {
+        DPRINTF(Indirect, "Hit %x (target:%s) with base_predictor\n", br_addr, target);
+    } else {
+        DPRINTF(Indirect, "Hit %x (target:%s)\n", br_addr, target);
+    }
+    return true;
 }
 
 void
@@ -188,9 +216,21 @@ ITTAGE::recordTarget(
     t_info.pathHist.pop_back();
 
     // we have lost the original lookup info, so we need to lookup again
-    int predictor, predictor_index;
-    TheISA::PCState dontcare_tgt;
-    bool predictor_found = lookup_helper(hist_entry.pcAddr, dontcare_tgt, tid, predicto, predictor_index);
+    int predictor, predictor_index, alt_predictor, alt_predictor_index, pred_count, predictor_sel, predictor_index_sel;
+    bool use_alt;
+    TheISA::PCState target_1, target_2, target_sel;
+    bool predictor_found = lookup_helper(hist_entry.pcAddr, target_1, target_2, tid, predictor, predictor_index, alt_predictor, alt_predictor_index, pred_count, use_alt);
+    if (use_alt) {
+        target_sel = target_2;
+        predictor_sel = predictor;
+        predictor_index_sel = predictor_index;
+    } else {
+        target_sel = target_1;
+        predictor_sel = alt_predictor;
+        predictor_index_sel = alt_predictor_index;
+    }
+    // update base predictor
+    base_predictor[tid][(hist_entry.pcAddr ^ previous_target) % (1 << TAG_BITS)] = target;
 
     // update global history anyway
     hist_entry.targetAddr = target.instAddr();
@@ -198,20 +238,79 @@ ITTAGE::recordTarget(
 
     bool allcate_values = true;
 
-    if (predictor_found && dontcare_tgt == target) {
+
+    if (pred_count > 0 && target_sel == target) {
         // the prediction was from predictor tables and correct
         // increment the counter
-        if (targetCache[tid][predictor][predictor_index].counter <= 2) {
-            ++targetCache[tid][predictor][predictor_index].counter;
+        if (targetCache[tid][predictor_sel][predictor_index_sel].counter <= 2) {
+            ++targetCache[tid][predictor_sel][predictor_index_sel].counter;
         }
     } else {
-        bool bimodal_correct; // todo: add bimodal algo here
-
-        // either a misprediction or no prediction
-        if (bimodal_correct) {
-            targetCache[tid][predictor][predictor_index].useful = 1;
+        // a misprediction
+        if (pred_count > 0) {
+            if (targetCache[tid][predictor][predictor_index].target == target && pred_count == 2 && targetCache[tid][alt_predictor][alt_predictor_index].target != target) {
+                // if pred was right and alt_pred was wrong
+                targetCache[tid][predictor][predictor_index].useful = 1;
+                allocate_values = false;
+                if (use_alt > 0) {
+                    --use_alt;
+                }
+            }
+            if (targetCache[tid][predictor][predictor_index].target != target && pred_count == 2 && targetCache[tid][alt_predictor][alt_predictor_index].target == target) {
+                // if pred was wrong and alt_pred was right
+                if (use_alt < 15) {
+                    ++use_alt;
+                }
+            }
+            // if counter > 0 then decrement, else replace
+            if (targetCache[tid][predictor_sel][predictor_index_sel].counter > 0) {
+                --targetCache[tid][predictor_sel][predictor_index_sel].counter;
+            } else {
+                targetCache[tid][predictor_sel][predictor_index_sel].target = target;
+                targetCache[tid][predictor_sel][predictor_index_sel].tag = (hist_entry.pcAddr & 0xff) ^ getCSR1(threadInfo[tid].ghr, predictor_sel) ^ (getCSR2(threadInfo[tid].ghr, predictor_sel) << 1);
+                targetCache[tid][predictor_sel][predictor_index_sel].counter = 1;
+                targetCache[tid][predictor_sel][predictor_index_sel].useful = 0;
+            }
         }
+        if (pred_count == 0 || allcate_values) {
+            int allocated = 0;
+            int start_pos;
+            if (pred_count > 0){
+                start_pos = predictor_sel + 1;
+            } else {
+                start_pos = 0;
+            }
+            for (; start_pos < numPredictors; ++j) {
+                int new_index = getAddrFold(hist_entry.pcAddr);
+                new_index ^= getCSR1(threadInfo[tid].ghr, start_pos);
+                if (targetCache[tid][start_pos][new_index].useful == 0) {
+                    if (reset_counter < 255) reset_counter++;
+                    targetCache[tid][start_pos][new_index].target = target;
+                    targetCache[tid][start_pos][new_index].tag = (hist_entry.pcAddr & 0xff) ^ getCSR1(threadInfo[tid].ghr, start_pos) ^ (getCSR2(threadInfo[tid].ghr, start_pos) << 1);
+                    targetCache[tid][start_pos][new_index].counter = 1;
+                    ++allcated;
+                    ++start_pos; // do not allocate on consecutive predictors
+                    if (allcated == 3) {
+                        break;
+                    }
+                } else {
+                    // reset useful bits
+                    if (reset_counter > 0) --reset_counter;
+                    if (reset_counter == 0) {
+                        for (int i = 0; i < numPredictors; ++i) {
+                            for (int j = 0; j < (1 << 8); ++j) {
+                                targetCache[tid][i][j].useful = 0;
+                            }
+                        }
+                        reset_counter = 128;
+                    }
+                }
+            }
+        }
+
     }
+
+    previous_target[tid] = target;
 
     // unsigned * ghr = static_cast<unsigned *>(indirect_history);
     // Addr set_index = getSetIndex(hist_entry.pcAddr, *ghr, tid);
