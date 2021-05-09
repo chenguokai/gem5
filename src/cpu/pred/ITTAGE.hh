@@ -54,7 +54,7 @@ private:
         HistoryEntry(Addr br_addr, Addr tgt_addr, InstSeqNum seq_num) : pcAddr(br_addr), targetAddr(tgt_addr), seqNum(seq_num) {}
         Addr pcAddr;
         Addr targetAddr;
-        InstSeqNum seq_num;
+        InstSeqNum seqNum;
     };
 
     struct ThreadInfo {
