@@ -13,6 +13,7 @@ ITTAGE::ITTAGE(
           numPredictors(params.numPredictors),
           ghrNumBits(params.indirectGHRBits),
           numTageBits(params.indirectTageBits),
+          pathLength(params.indirectPathLength),
           ghrMask((1 << params.indirectGHRBits)-1)
 {
     threadInfo.resize(params.numThreads);
@@ -65,15 +66,15 @@ ITTAGE::changeDirectionPrediction(ThreadID tid, void * indirect_history, bool ac
 }
 
 bool
-ITTAGE::lookup_helper(Addr br_addr, TheISA::PCState& target, TheISA::PCState& alt_target,ThreadID tid, int &predictor, int &predictor_index, int &alt_predictor, int &alt_predictor_index, int &pred_count, bool &use_alt)
+ITTAGE::lookup_helper(Addr br_addr, TheISA::PCState& target, TheISA::PCState& alt_target,ThreadID tid, int &predictor, int &predictor_index, int &alt_predictor, int &alt_predictor_index, int &pred_count, bool &use_alt_pred)
 {
     // todo: adjust according to ITTAGE
-    DPRINTF(Indirect, "Looking up %x (set:%d)\n", br_addr, set_index);
+    DPRINTF(Indirect, "Looking up %x (set:%d)\n", br_addr);
 
 
     unsigned index = getAddrFold(br_addr);
     int pred_counts = 0;
-    TheISA::PCState target1, target2;
+    TheISA::PCState target_1, target_2;
     int predictor_1, predictor_2, predictor_index_1, predictor_index_2;
 
     for (int i = numPredictors - 1; i >= 0; --i) {
@@ -81,7 +82,7 @@ ITTAGE::lookup_helper(Addr br_addr, TheISA::PCState& target, TheISA::PCState& al
         unsigned csr2 = getCSR2(threadInfo[tid].ghr, i);
         unsigned tmp_index = index ^ csr1;
         unsigned tmp_tag = (br_addr & 0xff) ^ csr1 ^ (csr2 << 1);
-        if (targetCache[tid][i][tmp_index].tag == tmp_tag)) {
+        if (targetCache[tid][i][tmp_index].tag == tmp_tag) {
             if (pred_counts == 0) {
                 target_1 = targetCache[tid][i][tmp_index].target;
                 predictor_1 = i;
@@ -98,13 +99,13 @@ ITTAGE::lookup_helper(Addr br_addr, TheISA::PCState& target, TheISA::PCState& al
     }
     // decide whether use altpred or not
     if (pred_counts > 0) {
-        if (use_alt > 7 && targetCache[tid][predictor_1][predicotr_index_1].counter == 1 &&
-                targetCache[tid][predictor_1][predicotr_index_1].useful == 0 && pred_counts == 2 &&
+        if (use_alt > 7 && targetCache[tid][predictor_1][predictor_index_1].counter == 1 &&
+                targetCache[tid][predictor_1][predictor_index_1].useful == 0 && pred_counts == 2 &&
                 targetCache[tid][predictor_2][predictor_index_2].counter > 0
         ) {
-            use_alt = true;
+            use_alt_pred = true;
         } else {
-            use_alt = false;
+            use_alt_pred = false;
         }
         target = target_1;
         alt_target = target_2;
@@ -129,9 +130,9 @@ ITTAGE::lookup_helper(Addr br_addr, TheISA::PCState& target, TheISA::PCState& al
 bool ITTAGE::lookup(Addr br_addr, TheISA::PCState& target, ThreadID tid) {
     TheISA::PCState alt_target;
     int predictor, predictor_index, alt_predictor, alt_predictor_index, pred_count; // no use
-    bool use_alt;
-    lookup_helper(br_addr, target, alt_target, tid, predictor, predictor_index, alt_predictor, alt_predictor_index, pred_count, use_alt);
-    if (use_alt) {
+    bool use_alt_pred;
+    lookup_helper(br_addr, target, alt_target, tid, predictor, predictor_index, alt_predictor, alt_predictor_index, pred_count, use_alt_pred);
+    if (use_alt_pred) {
         target = alt_target;
     }
     if (pred_count == 0) {
@@ -217,10 +218,10 @@ ITTAGE::recordTarget(
 
     // we have lost the original lookup info, so we need to lookup again
     int predictor, predictor_index, alt_predictor, alt_predictor_index, pred_count, predictor_sel, predictor_index_sel;
-    bool use_alt;
+    bool use_alt_pred;
     TheISA::PCState target_1, target_2, target_sel;
-    bool predictor_found = lookup_helper(hist_entry.pcAddr, target_1, target_2, tid, predictor, predictor_index, alt_predictor, alt_predictor_index, pred_count, use_alt);
-    if (use_alt) {
+    bool predictor_found = lookup_helper(hist_entry.pcAddr, target_1, target_2, tid, predictor, predictor_index, alt_predictor, alt_predictor_index, pred_count, use_alt_pred);
+    if (use_alt_pred) {
         target_sel = target_2;
         predictor_sel = predictor;
         predictor_index_sel = predictor_index;
@@ -230,13 +231,13 @@ ITTAGE::recordTarget(
         predictor_index_sel = alt_predictor_index;
     }
     // update base predictor
-    base_predictor[tid][(hist_entry.pcAddr ^ previous_target) % (1 << TAG_BITS)] = target;
+    base_predictor[tid][(hist_entry.pcAddr ^ previous_target[tid]) % (1 << numTageBits)] = target;
 
     // update global history anyway
     hist_entry.targetAddr = target.instAddr();
     t_info.pathHist.push_back(hist_entry);
 
-    bool allcate_values = true;
+    bool allocate_values = true;
 
 
     if (pred_count > 0 && target_sel == target) {
@@ -272,7 +273,7 @@ ITTAGE::recordTarget(
                 targetCache[tid][predictor_sel][predictor_index_sel].useful = 0;
             }
         }
-        if (pred_count == 0 || allcate_values) {
+        if (pred_count == 0 || allocate_values) {
             int allocated = 0;
             int start_pos;
             if (pred_count > 0){
@@ -280,7 +281,7 @@ ITTAGE::recordTarget(
             } else {
                 start_pos = 0;
             }
-            for (; start_pos < numPredictors; ++j) {
+            for (; start_pos < numPredictors; ++start_pos) {
                 int new_index = getAddrFold(hist_entry.pcAddr);
                 new_index ^= getCSR1(threadInfo[tid].ghr, start_pos);
                 if (targetCache[tid][start_pos][new_index].useful == 0) {
@@ -288,9 +289,9 @@ ITTAGE::recordTarget(
                     targetCache[tid][start_pos][new_index].target = target;
                     targetCache[tid][start_pos][new_index].tag = (hist_entry.pcAddr & 0xff) ^ getCSR1(threadInfo[tid].ghr, start_pos) ^ (getCSR2(threadInfo[tid].ghr, start_pos) << 1);
                     targetCache[tid][start_pos][new_index].counter = 1;
-                    ++allcated;
+                    ++allocated;
                     ++start_pos; // do not allocate on consecutive predictors
-                    if (allcated == 3) {
+                    if (allocated == 3) {
                         break;
                     }
                 } else {
@@ -310,7 +311,7 @@ ITTAGE::recordTarget(
 
     }
 
-    previous_target[tid] = target;
+    previous_target[tid] = target.instAddr();
 
     // unsigned * ghr = static_cast<unsigned *>(indirect_history);
     // Addr set_index = getSetIndex(hist_entry.pcAddr, *ghr, tid);
@@ -366,11 +367,11 @@ SimpleIndirectPredictor::getTag(Addr br_addr)
     return (br_addr >> instShift) & ((0x1<<tagBits)-1);
 }
 */
-inlien int ITTAGE::getTableGhrLen(int table) {
+int ITTAGE::getTableGhrLen(int table) {
     return 8 << (table - 1);
 }
 
-inline unsigned ITTAGE::getCSR1(unsigned ghr, int table) {
+unsigned ITTAGE::getCSR1(unsigned ghr, int table) {
     int ghrLen = getTableGhrLen(table);
     unsigned ret = 0, mask = 0x7f;
     int i = 0;
@@ -383,7 +384,7 @@ inline unsigned ITTAGE::getCSR1(unsigned ghr, int table) {
     return ret & mask;
 }
 
-inline unsigned ITTAGE::getCSR2(unsigned ghr, int table) {
+unsigned ITTAGE::getCSR2(unsigned ghr, int table) {
     int ghrLen = getTableGhrLen(table);
     unsigned ret = 0, mask = 0xff;
     int i = 0;

@@ -32,11 +32,19 @@ public:
     void changeDirectionPrediction(ThreadID tid, void * indirect_history, bool actually_taken);
 
 private:
+    bool lookup_helper(Addr, RiscvISA::PCState&, RiscvISA::PCState&, ThreadID, int&, int&, int&, int&, int&, bool&);
+    unsigned getCSR1(unsigned ghr, int table);
+    unsigned getCSR2(unsigned ghr, int table);
+    uint8_t getAddrFold(int address);
+    int getTableGhrLen(int table);
     const unsigned ghrMask;
     const unsigned pathLength;
+    const unsigned numPredictors;
+    const unsigned ghrNumBits;
+    const unsigned numTageBits;
     int use_alt; // min:0 max: 15
     int reset_counter;
-    std::vector<TheISA::PCState> previous_target;
+    std::vector<Addr> previous_target;
     std::vector<std::vector<TheISA::PCState> >base_predictor;
     struct IPredEntry {
         IPredEntry() : tag(0), target(0), counter(0), useful(0) {}
