@@ -16,6 +16,10 @@ ITTAGE::ITTAGE(
           pathLength(params.indirectPathLength),
           ghrMask((1 << params.indirectGHRBits)-1)
 {
+    std::cout<<"ITTAGE parameters:"<<std::endl;
+    std::cout<<"numThreads="<<params.numThreads<<std::endl;
+    std::cout<<"numPredictors="<<params.numPredictors<<std::endl;
+    // std::cout<<"numTageBits="<<params.indirectTageBits<<std::end;
     threadInfo.resize(params.numThreads);
 
     targetCache.resize(params.numThreads);
@@ -69,7 +73,7 @@ bool
 ITTAGE::lookup_helper(Addr br_addr, TheISA::PCState& target, TheISA::PCState& alt_target,ThreadID tid, int &predictor, int &predictor_index, int &alt_predictor, int &alt_predictor_index, int &pred_count, bool &use_alt_pred)
 {
     // todo: adjust according to ITTAGE
-    DPRINTF(Indirect, "Looking up %x (set:%d)\n", br_addr);
+    DPRINTF(Indirect, "Looking up %x\n", br_addr);
 
 
     unsigned index = getAddrFold(br_addr);
@@ -93,6 +97,7 @@ ITTAGE::lookup_helper(Addr br_addr, TheISA::PCState& target, TheISA::PCState& al
                 target_2 = targetCache[tid][i][tmp_index].target;
                 predictor_2 = i;
                 predictor_index_2 = tmp_index;
+                ++pred_counts;
                 break;
             }
         }
@@ -116,7 +121,8 @@ ITTAGE::lookup_helper(Addr br_addr, TheISA::PCState& target, TheISA::PCState& al
         pred_count = pred_counts;
         return true;
     } else {
-        target = base_predictor[tid][(br_addr ^ previous_target[tid]) % (1 << numTageBits)];
+        use_alt_pred = false;
+        target = base_predictor[tid][(br_addr ^ previous_target[tid].instAddr()) % (1 << numTageBits)];
         // no need to set
         pred_count = pred_counts;
 
@@ -140,6 +146,8 @@ bool ITTAGE::lookup(Addr br_addr, TheISA::PCState& target, ThreadID tid) {
     } else {
         DPRINTF(Indirect, "Hit %x (target:%s)\n", br_addr, target);
     }
+    // std::cout<<"DEBUG: target.instAddr="<<target.instAddr()<<std::endl;
+    // target.set(target.instAddr());
     return true;
 }
 
@@ -208,6 +216,8 @@ ITTAGE::recordTarget(
         InstSeqNum seq_num, void * indirect_history, const TheISA::PCState& target,
         ThreadID tid)
 {
+    DPRINTF(Indirect, "record with target:%s\n",
+            target);
     // todo: adjust according to ITTAGE
     ThreadInfo &t_info = threadInfo[tid];
 
@@ -223,15 +233,15 @@ ITTAGE::recordTarget(
     bool predictor_found = lookup_helper(hist_entry.pcAddr, target_1, target_2, tid, predictor, predictor_index, alt_predictor, alt_predictor_index, pred_count, use_alt_pred);
     if (use_alt_pred) {
         target_sel = target_2;
-        predictor_sel = predictor;
-        predictor_index_sel = predictor_index;
-    } else {
-        target_sel = target_1;
         predictor_sel = alt_predictor;
         predictor_index_sel = alt_predictor_index;
+    } else {
+        target_sel = target_1;
+        predictor_sel = predictor;
+        predictor_index_sel = predictor_index;
     }
     // update base predictor
-    base_predictor[tid][(hist_entry.pcAddr ^ previous_target[tid]) % (1 << numTageBits)] = target;
+    base_predictor[tid][(hist_entry.pcAddr ^ previous_target[tid].instAddr()) % (1 << numTageBits)] = target;
 
     // update global history anyway
     hist_entry.targetAddr = target.instAddr();
@@ -311,7 +321,7 @@ ITTAGE::recordTarget(
 
     }
 
-    previous_target[tid] = target.instAddr();
+    previous_target[tid] = target;
 
     // unsigned * ghr = static_cast<unsigned *>(indirect_history);
     // Addr set_index = getSetIndex(hist_entry.pcAddr, *ghr, tid);
@@ -368,7 +378,7 @@ SimpleIndirectPredictor::getTag(Addr br_addr)
 }
 */
 int ITTAGE::getTableGhrLen(int table) {
-    return 8 << (table - 1);
+    return 8 << table;
 }
 
 unsigned ITTAGE::getCSR1(unsigned ghr, int table) {

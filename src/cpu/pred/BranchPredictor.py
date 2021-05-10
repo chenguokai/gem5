@@ -60,7 +60,7 @@ class ITTAGE(IndirectPredictor):
         indirectPathLength = Param.Unsigned(3, "Previous indirect targets to use for path history")
         numPredictors = Param.Unsigned(4, "Number of TAGE predictors")
         indirectGHRBits = Param.Unsigned(13, "Indirect GHR number of bits")
-        indirectTageBits = Param.Unsigned(20, "Tage bit length for base predictor")
+        indirectTageBits = Param.Unsigned(16, "Tage bit length for base predictor")
 
 class BranchPredictor(SimObject):
     type = 'BranchPredictor'
@@ -76,7 +76,7 @@ class BranchPredictor(SimObject):
 
     #indirectBranchPred = Param.IndirectPredictor(SimpleIndirectPredictor(),
     #  "Indirect branch predictor, set to NULL to disable indirect predictions")
-    indirectBranchPred = Param.IndirectPredictor(ITTAGE(),
+    indirectBranchPred = Param.IndirectPredictor(SimpleIndirectPredictor(),
       "Indirect branch predictor, set to NULL to disable indirect predictions")
 
 class LocalBP(BranchPredictor):
