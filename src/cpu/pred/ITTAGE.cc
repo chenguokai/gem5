@@ -147,7 +147,7 @@ bool ITTAGE::lookup(Addr br_addr, TheISA::PCState& target, ThreadID tid) {
         DPRINTF(Indirect, "Hit %x (target:%s)\n", br_addr, target);
     }
     // std::cout<<"DEBUG: target.instAddr="<<target.instAddr()<<std::endl;
-    // target.set(target.instAddr());
+    target.set(target.instAddr());
     return true;
 }
 
@@ -216,8 +216,7 @@ ITTAGE::recordTarget(
         InstSeqNum seq_num, void * indirect_history, const TheISA::PCState& target,
         ThreadID tid)
 {
-    DPRINTF(Indirect, "record with target:%s\n",
-            target);
+    DPRINTF(Indirect, "record with target:%s\n", target);
     // todo: adjust according to ITTAGE
     ThreadInfo &t_info = threadInfo[tid];
 

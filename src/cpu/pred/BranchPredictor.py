@@ -76,7 +76,7 @@ class BranchPredictor(SimObject):
 
     #indirectBranchPred = Param.IndirectPredictor(SimpleIndirectPredictor(),
     #  "Indirect branch predictor, set to NULL to disable indirect predictions")
-    indirectBranchPred = Param.IndirectPredictor(SimpleIndirectPredictor(),
+    indirectBranchPred = Param.IndirectPredictor(ITTAGE(),
       "Indirect branch predictor, set to NULL to disable indirect predictions")
 
 class LocalBP(BranchPredictor):
