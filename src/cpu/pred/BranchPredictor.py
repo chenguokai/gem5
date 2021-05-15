@@ -58,8 +58,8 @@ class ITTAGE(IndirectPredictor):
         cxx_header = "cpu/pred/ITTAGE.hh"
 
         indirectPathLength = Param.Unsigned(3, "Previous indirect targets to use for path history")
-        numPredictors = Param.Unsigned(4, "Number of TAGE predictors")
-        indirectGHRBits = Param.Unsigned(13, "Indirect GHR number of bits")
+        numPredictors = Param.Unsigned(3, "Number of TAGE predictors")
+        indirectGHRBits = Param.Unsigned(31, "Indirect GHR number of bits")
         indirectTageBits = Param.Unsigned(16, "Tage bit length for base predictor")
 
 class BranchPredictor(SimObject):

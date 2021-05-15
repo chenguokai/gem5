@@ -189,15 +189,21 @@ ITTAGE::squash(InstSeqNum seq_num, ThreadID tid)
     DPRINTF(Indirect, "Squashing seq:%d\n", seq_num);
     ThreadInfo &t_info = threadInfo[tid];
     auto squash_itr = t_info.pathHist.begin();
+    int valid_count = 0;
     while (squash_itr != t_info.pathHist.end()) {
         if (squash_itr->seqNum > seq_num) {
             break;
         }
         ++squash_itr;
+        ++valid_count;
     }
     if (squash_itr != t_info.pathHist.end()) {
         DPRINTF(Indirect, "Squashing series starting with sn:%d\n",
                 squash_itr->seqNum);
+    }
+    int queue_size = t_info.pathHist.size();
+    for (int i = 0; i < queue_size - valid_count; ++i) {
+        t_info.ghr >>=1;
     }
     t_info.pathHist.erase(squash_itr, t_info.pathHist.end());
 }
@@ -216,6 +222,9 @@ ITTAGE::recordTarget(
         InstSeqNum seq_num, void * indirect_history, const TheISA::PCState& target,
         ThreadID tid)
 {
+    // here ghr was appended one more
+    int ghr_last = threadInfo[tid].ghr | 1;
+    threadInfo[tid].ghr >>= 1;
     DPRINTF(Indirect, "record with target:%s\n", target);
     // todo: adjust according to ITTAGE
     ThreadInfo &t_info = threadInfo[tid];
@@ -322,6 +331,8 @@ ITTAGE::recordTarget(
 
     previous_target[tid] = target;
 
+    threadInfo[tid].ghr = (threadInfo[tid].ghr << 1) | ghr_last;
+
     // unsigned * ghr = static_cast<unsigned *>(indirect_history);
     // Addr set_index = getSetIndex(hist_entry.pcAddr, *ghr, tid);
     // Addr tag = getTag(hist_entry.pcAddr);
@@ -382,6 +393,7 @@ int ITTAGE::getTableGhrLen(int table) {
 
 unsigned ITTAGE::getCSR1(unsigned ghr, int table) {
     int ghrLen = getTableGhrLen(table);
+    ghr = ghr & ((1ULL << ghrLen) - 1); // remove unnecessary data on higher position
     unsigned ret = 0, mask = 0x7f;
     int i = 0;
     while (i + 7 < ghrLen) {
@@ -395,6 +407,7 @@ unsigned ITTAGE::getCSR1(unsigned ghr, int table) {
 
 unsigned ITTAGE::getCSR2(unsigned ghr, int table) {
     int ghrLen = getTableGhrLen(table);
+    ghr = ghr & ((1ULL << ghrLen) - 1); // remove unnecessary data on higher position
     unsigned ret = 0, mask = 0xff;
     int i = 0;
     while (i + 8 < ghrLen) {
