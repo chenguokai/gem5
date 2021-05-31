@@ -333,60 +333,8 @@ ITTAGE::recordTarget(
 
     threadInfo[tid].ghr = (threadInfo[tid].ghr << 1) | ghr_last;
 
-    // unsigned * ghr = static_cast<unsigned *>(indirect_history);
-    // Addr set_index = getSetIndex(hist_entry.pcAddr, *ghr, tid);
-    // Addr tag = getTag(hist_entry.pcAddr);
-
-
-    // assert(set_index < numSets);
-
-    // auto &iset = targetCache[set_index];
-    /*
-    for (auto way = iset.begin(); way != iset.end(); ++way) {
-        if (way->tag == tag) {
-            DPRINTF(Indirect, "Updating Target (seq: %d br:%x set:%d target:"
-                              "%s)\n", seq_num, hist_entry.pcAddr, set_index, target);
-            way->target = target;
-            return;
-        }
-    }
-
-    DPRINTF(Indirect, "Allocating Target (seq: %d br:%x set:%d target:%s)\n",
-            seq_num, hist_entry.pcAddr, set_index, target);
-    // Did not find entry, random replacement
-    auto &way = iset[rand() % numWays];
-    way.tag = tag;
-    way.target = target;
-    */
 }
 
-/*
-inline Addr
-SimpleIndirectPredictor::getSetIndex(Addr br_addr, unsigned ghr, ThreadID tid)
-{
-    ThreadInfo &t_info = threadInfo[tid];
-
-    Addr hash = br_addr >> instShift;
-    if (hashGHR) {
-        hash ^= ghr;
-    }
-    if (hashTargets) {
-        unsigned hash_shift = floorLog2(numSets) / pathLength;
-        for (int i = t_info.pathHist.size()-1, p = 0;
-             i >= 0 && p < pathLength; i--, p++) {
-            hash ^= (t_info.pathHist[i].targetAddr >>
-                                                   (instShift + p*hash_shift));
-        }
-    }
-    return hash & (numSets-1);
-}
-
-inline Addr
-SimpleIndirectPredictor::getTag(Addr br_addr)
-{
-    return (br_addr >> instShift) & ((0x1<<tagBits)-1);
-}
-*/
 int ITTAGE::getTableGhrLen(int table) {
     return 8 << table;
 }
