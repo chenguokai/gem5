@@ -40,7 +40,7 @@ private:
     const unsigned numPredictors;
     const unsigned ghrNumBits;
     const unsigned numTageBits;
-    const unsigned numWeightBits = 10; // a little longer than paper, the predicted PC length in bit.
+    const unsigned numWeightBits = 8; // a little longer than paper, the predicted PC length in bit.
     const unsigned numLocalHistBits = 10; // according to the local histroy description
     const unsigned numWeightEntry = (1 << numWeightBits);
     const unsigned numBTBAssoc = 64;

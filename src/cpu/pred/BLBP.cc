@@ -28,6 +28,11 @@ BLBP::BLBP(const BLBPParams &params)
         WeightTable[i].resize(numPredictors);
         for (unsigned j = 0; j < numPredictors; ++j) {
             WeightTable[i][j].resize(numWeightEntry);
+            for (int k = 0; k < numWeightEntry; ++k) {
+                for (int l = 0; l < 12; ++l) {
+                    WeightTable[i][j][k].weight[l] = 3; // a medium init value
+                }
+            }
         }
     }
     IBTB.resize(params.numThreads);
@@ -39,6 +44,10 @@ BLBP::BLBP(const BLBPParams &params)
     Sum.resize(params.numThreads);
     Theta.resize(params.numThreads);
     Theta_counter.resize(params.numThreads);
+    for (int i = 0; i < params.numThreads; ++i) {
+        Theta[i] = 13; // an init value
+        Theta_counter[i] = 0;
+    }
 
     intervalTable.push_back(std::make_pair(0, 13));
     intervalTable.push_back(std::make_pair(1, 33));
@@ -153,7 +162,7 @@ bool BLBP::lookup_helper(Addr br_addr, TheISA::PCState& target, ThreadID tid) {
             max_target = current_target;
         }
     }
-    if (!max_target_addr) {
+    if (max_target_addr) {
         // we have found the target
         target = max_target;
         // record sum to help record target
@@ -207,14 +216,16 @@ void BLBP::commit(InstSeqNum seq_num, ThreadID tid, void * indirect_history) {
         // first update the first predictor
         entry = local_to_entry(t_info.pathHist[t_info.headHistEntry].pcAddr);
         Addr targetPC = t_info.pathHist[t_info.headHistEntry].targetAddr >> 2;
-        for (int i = 0; i < numWeightEntry; ++i) {
-            if (!(t_info.pathHist[t_info.headHistEntry].available & (1UL << i))) {
+        for (int i = 0; i < numWeightBits; ++i) {
+            if ((t_info.pathHist[t_info.headHistEntry].available & (1UL << i))) {
                 continue;
             }
             if (targetPC & (1UL << i)) {
-                ++WeightTable[tid][0][entry].weight[i];
+                if (WeightTable[tid][0][entry].weight[i] < 7)
+                    ++WeightTable[tid][0][entry].weight[i];
             } else {
-                --WeightTable[tid][0][entry].weight[i];
+                if (WeightTable[tid][0][entry].weight[i] > 0)
+                    --WeightTable[tid][0][entry].weight[i];
             }
         }
         // update the following predictors
@@ -222,13 +233,15 @@ void BLBP::commit(InstSeqNum seq_num, ThreadID tid, void * indirect_history) {
         for (int i = 1; i < numPredictors; ++i) {
             entry = history_to_entry(i, *previousGhr);
             for (int j = 0; j < numWeightBits; ++j) {
-                if (!(t_info.pathHist[t_info.headHistEntry].available & (1UL << i))) {
+                if ((t_info.pathHist[t_info.headHistEntry].available & (1UL << i))) {
                     continue;
                 }
                 if (targetPC & (1UL << j)) {
-                    ++WeightTable[tid][i][entry].weight[j];
+                    if (WeightTable[tid][0][entry].weight[i] < 7)
+                        ++WeightTable[tid][i][entry].weight[j];
                 } else {
-                    --WeightTable[tid][i][entry].weight[j];
+                    if (WeightTable[tid][0][entry].weight[i] > 0)
+                        --WeightTable[tid][i][entry].weight[j];
                 }
             }
         }
@@ -298,23 +311,28 @@ void BLBP::recordTarget(InstSeqNum seq_num, void * indirect_history, const TheIS
 
     // first get the btb_entry
     unsigned btb_entry = addr_fold_btb(hist_entry.pcAddr);
-    // BTBEntry it;
-    // uint64_t available = 0xffffffffffffffffUL;
-    // while (!tmp_quque.empty()) tmp_quque.pop(); // we expect an empty tmp queue
-    /*
-    while (!IBTB[tid][btb_entry].empty()) {
-        it = IBTB[tid][btb_entry].top();
-        IBTB[tid][btb_entry].pop();
-        available &= IBTB[tid][btb_entry].targetAddr;
-        tmp_quque.push(it);
-    }
-    */
     if (IBTB[tid][btb_entry].size() >= numBTBEntry) {
         // LRU replacement
         IBTB[tid][btb_entry].pop();
         
     }
-    IBTB[tid][btb_entry].push(BTBEntry(0, target, seq_num));
+    std::queue<BTBEntry> check_queue;
+    bool no_same = true;
+    while (!IBTB[tid][btb_entry].empty()) {
+        if (IBTB[tid][btb_entry].top().target.instAddr() == target.instAddr()) {
+            no_same = false;
+            break;
+        }
+        check_queue.push(IBTB[tid][btb_entry].top());
+        IBTB[tid][btb_entry].pop();
+    }
+    while (!check_queue.empty()) {
+        IBTB[tid][btb_entry].push(check_queue.front());
+        check_queue.pop();
+    }
+    if (no_same) {
+        IBTB[tid][btb_entry].push(BTBEntry(0, target, seq_num));
+    }
 
     // maintain theta for mispredictions
     if (Theta_counter[tid] > -0x7F) {
@@ -332,27 +350,31 @@ void BLBP::recordTarget(InstSeqNum seq_num, void * indirect_history, const TheIS
     // first update the first predictor
     entry = local_to_entry(hist_entry.pcAddr);
     Addr targetPC = target.instAddr() >> 2;
-    for (int i = 0; i < numWeightEntry; ++i) {
-        if (!(hist_entry.available & (1UL << i))) {
+    for (int i = 0; i < numWeightBits; ++i) {
+        if ((hist_entry.available & (1UL << i))) {
             continue;
         }
         if (targetPC & (1UL << i)) {
-            ++WeightTable[tid][0][entry].weight[i];
+            if (WeightTable[tid][0][entry].weight[i] < 7)
+                ++WeightTable[tid][0][entry].weight[i];
         } else {
-            --WeightTable[tid][0][entry].weight[i];
+            if (WeightTable[tid][0][entry].weight[i] > 0)
+                --WeightTable[tid][0][entry].weight[i];
         }
     }
     // update the following predictors
     for (int i = 1; i < numPredictors; ++i) {
         entry = history_to_entry(i, threadInfo[tid].ghr);
         for (int j = 0; j < numWeightBits; ++j) {
-            if (!(hist_entry.available & (1UL << i))) {
+            if ((hist_entry.available & (1UL << i))) {
                 continue;
             }
             if (targetPC & (1UL << j)) {
-                ++WeightTable[tid][i][entry].weight[j];
+                if (WeightTable[tid][0][entry].weight[i] < 7)
+                    ++WeightTable[tid][i][entry].weight[j];
             } else {
-                --WeightTable[tid][i][entry].weight[j];
+                if (WeightTable[tid][0][entry].weight[i] > 0)
+                    --WeightTable[tid][i][entry].weight[j];
             }
         }
     }
@@ -396,6 +418,7 @@ unsigned BLBP::history_to_entry(int predictor, ghrEntry &ghr) {
         tmp = 0;
         for (int j = 0; j < numLocalHistBits; ++j) {
             tmp |= tmp_ghr.ghr[0] & 1;
+            tmp <<= 1;
             shiftGhr_right(tmp_ghr);
         }
         ret ^= tmp;
@@ -403,10 +426,11 @@ unsigned BLBP::history_to_entry(int predictor, ghrEntry &ghr) {
     tmp = 0;
     for (;i < interval.second; ++i) {
         tmp |= tmp_ghr.ghr[0] & 1;
+        tmp <<= 1;
         shiftGhr_right(tmp_ghr);
     }
     ret ^= tmp;
-    return ret;
+    return ret & 0xff;
 }
 
 unsigned BLBP::local_to_entry(Addr pc) {
@@ -416,5 +440,5 @@ unsigned BLBP::local_to_entry(Addr pc) {
         pc >>= 8;
         ret = ret ^ tmp;
     }
-    return ret;
+    return ret & 0xff;
 }
