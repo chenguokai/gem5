@@ -224,7 +224,7 @@ void BLBP::commit(InstSeqNum seq_num, ThreadID tid, void * indirect_history) {
                 if (WeightTable[tid][0][entry].weight[i] < 7)
                     ++WeightTable[tid][0][entry].weight[i];
             } else {
-                if (WeightTable[tid][0][entry].weight[i] > 0)
+                if (WeightTable[tid][0][entry].weight[i] > -7)
                     --WeightTable[tid][0][entry].weight[i];
             }
         }
@@ -240,7 +240,7 @@ void BLBP::commit(InstSeqNum seq_num, ThreadID tid, void * indirect_history) {
                     if (WeightTable[tid][0][entry].weight[i] < 7)
                         ++WeightTable[tid][i][entry].weight[j];
                 } else {
-                    if (WeightTable[tid][0][entry].weight[i] > 0)
+                    if (WeightTable[tid][0][entry].weight[i] > -7)
                         --WeightTable[tid][i][entry].weight[j];
                 }
             }
@@ -342,7 +342,7 @@ void BLBP::recordTarget(InstSeqNum seq_num, void * indirect_history, const TheIS
     }
     
     // here ghr was appended one more
-    int ghr_last = threadInfo[tid].ghr.ghr[0] | 1;
+    int ghr_last = threadInfo[tid].ghr.ghr[0] & 1;
     shiftGhr_right(threadInfo[tid].ghr);
 
     // update weight table
@@ -358,7 +358,7 @@ void BLBP::recordTarget(InstSeqNum seq_num, void * indirect_history, const TheIS
             if (WeightTable[tid][0][entry].weight[i] < 7)
                 ++WeightTable[tid][0][entry].weight[i];
         } else {
-            if (WeightTable[tid][0][entry].weight[i] > 0)
+            if (WeightTable[tid][0][entry].weight[i] > -7)
                 --WeightTable[tid][0][entry].weight[i];
         }
     }
@@ -373,7 +373,7 @@ void BLBP::recordTarget(InstSeqNum seq_num, void * indirect_history, const TheIS
                 if (WeightTable[tid][0][entry].weight[i] < 7)
                     ++WeightTable[tid][i][entry].weight[j];
             } else {
-                if (WeightTable[tid][0][entry].weight[i] > 0)
+                if (WeightTable[tid][0][entry].weight[i] > -7)
                     --WeightTable[tid][i][entry].weight[j];
             }
         }

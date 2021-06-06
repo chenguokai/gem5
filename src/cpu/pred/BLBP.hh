@@ -85,7 +85,7 @@ private:
         ghrEntry ghr;
     };
     struct Weight{
-        uint8_t weight[12];
+        int16_t weight[12];
     };
 
     std::vector<ThreadInfo> threadInfo;
