@@ -118,5 +118,6 @@ private:
     void shiftGhr_right(ghrEntry &ghr);
     unsigned local_to_entry(Addr pc);
     void shiftGhr(ghrEntry &ghr);
+    unsigned addr_to_tag(Addr br_addr);
 };
 #endif // __CPU_PRED_BLBP_HH__

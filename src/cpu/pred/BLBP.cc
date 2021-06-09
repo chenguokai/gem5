@@ -101,8 +101,9 @@ void BLBP::changeDirectionPrediction(ThreadID tid, void * indirect_history, bool
 
 bool BLBP::lookup_helper(Addr br_addr, TheISA::PCState& target, ThreadID tid) {
     // we need to lookup through
-
     unsigned btb_entry = addr_fold_btb(br_addr);
+    unsigned tag = addr_to_tag(br_addr);
+    DPRINTF(Indirect, "BTB ENTRY %d for pc %llx\n", btb_entry, br_addr);
     std::vector<std::pair<int, TheISA::PCState> >ans; // first: the total sum second: the target address
 
 
@@ -125,14 +126,17 @@ bool BLBP::lookup_helper(Addr br_addr, TheISA::PCState& target, ThreadID tid) {
     // get the BTB entry
 
     BTBEntry it(0, target, 0);
-    uint64_t available = 0xffffffffffffffffUL;
+    uint64_t available_and = 0xffffffffffffffffUL;
+    uint64_t available_or = 0x0UL;
     while (!tmp_quque.empty()) tmp_quque.pop(); // we expect an empty tmp queue
     while (!IBTB[tid][btb_entry].empty()) {
         it = IBTB[tid][btb_entry].top();
         IBTB[tid][btb_entry].pop();
-        available &= it.target.instAddr();
+        available_and &= it.target.instAddr();
+        available_or |= it.target.instAddr();
         tmp_quque.push(it);
     }
+    uint64_t available = (~available_or) | available_and;
 
     available >>= 2; // skip the lowest two bits
     // now we have common bits kept 1 and non-common ones 0
@@ -141,26 +145,29 @@ bool BLBP::lookup_helper(Addr br_addr, TheISA::PCState& target, ThreadID tid) {
     TheISA::PCState max_target, current_target;
     Addr max_target_addr = 0;
     while (!tmp_quque.empty()) {
-        current_val = 0;
-        // check every target and get the maximum value
-        current_target = tmp_quque.front().target;
-        Addr target = current_target.instAddr();
+        
+        if (tmp_quque.front().tag == tag) {
+            current_val = 0;
+            // check every target and get the maximum value
+            current_target = tmp_quque.front().target;
+            Addr target = current_target.instAddr();
+            target >>= 2; // skip the lowest two bits
+            for (int i = 0; i < numWeightBits; ++i) {
+                if ((available & (1UL << i)) == 0) {
+                    // non-common bit, calculate the bits
+                    // iterate through all given entries
+                    current_val += (target & 1) * weight_sum[i];
+                }
+                target >>= 1;
+            }
+            if (current_val > max_val) {
+                max_val = current_val;
+                max_target_addr = current_target.instAddr();
+                max_target = current_target;
+            }
+        }
         IBTB[tid][btb_entry].push(tmp_quque.front());
         tmp_quque.pop();
-        target >>= 2; // skip the lowest two bits
-        for (int i = 0; i < numWeightBits; ++i) {
-            if ((available & (1UL << i)) == 0) {
-                // non-common bit, calculate the bits
-                // iterate through all given entries
-                current_val += (target & 1) * weight_sum[i];
-            }
-            target >>= 1;
-        }
-        if (current_val > max_val) {
-            max_val = current_val;
-            max_target_addr = current_target.instAddr();
-            max_target = current_target;
-        }
     }
     if (max_target_addr) {
         // we have found the target
@@ -174,6 +181,7 @@ bool BLBP::lookup_helper(Addr br_addr, TheISA::PCState& target, ThreadID tid) {
     Sum[tid].found = false;
     Sum[tid].sum = 0;
     Sum[tid].available = available;
+    DPRINTF(Indirect, "BLBP miss addr %llx\n", br_addr);
     return false;
 }
 
@@ -301,38 +309,52 @@ BLBP::deleteIndirectInfo(ThreadID tid, void * indirect_history)
 
 void BLBP::recordTarget(InstSeqNum seq_num, void * indirect_history, const TheISA::PCState& target, ThreadID tid) {
     
-
     // mainly associate target
     ThreadInfo &t_info = threadInfo[tid];
     auto hist_entry = *(t_info.pathHist.rbegin());
+
+    DPRINTF(Indirect, "Recording pc %llx target %llx seq:%d\n", hist_entry.pcAddr, target.instAddr(), seq_num);
 
     // Temporarily pop it off the history
     // TODO: check if essential
 
     // first get the btb_entry
     unsigned btb_entry = addr_fold_btb(hist_entry.pcAddr);
+    unsigned tag = addr_to_tag(hist_entry.pcAddr);
     if (IBTB[tid][btb_entry].size() >= numBTBEntry) {
         // LRU replacement
         IBTB[tid][btb_entry].pop();
+        DPRINTF(Indirect, "replace BTB entry %d\n", btb_entry);
         
     }
     std::queue<BTBEntry> check_queue;
     bool no_same = true;
     while (!IBTB[tid][btb_entry].empty()) {
-        if (IBTB[tid][btb_entry].top().target.instAddr() == target.instAddr()) {
+        if (IBTB[tid][btb_entry].top().target.instAddr() == target.instAddr() && IBTB[tid][btb_entry].top().tag == tag) {
             no_same = false;
-            break;
+            auto update = IBTB[tid][btb_entry].top();
+            update.counter = seq_num;
+            IBTB[tid][btb_entry].pop();
+            IBTB[tid][btb_entry].push(update);
         }
         check_queue.push(IBTB[tid][btb_entry].top());
         IBTB[tid][btb_entry].pop();
     }
+    if (no_same) {
+        check_queue.push(BTBEntry(tag, target, seq_num));
+    }
+
+    uint64_t available_and = 0xffffffffffffffffUL, available_or = 0, available;
     while (!check_queue.empty()) {
         IBTB[tid][btb_entry].push(check_queue.front());
+        available_and &= check_queue.front().target.instAddr();
+        available_or |= check_queue.front().target.instAddr();
         check_queue.pop();
     }
-    if (no_same) {
-        IBTB[tid][btb_entry].push(BTBEntry(0, target, seq_num));
-    }
+    available = (~available_or) | available_and;
+    hist_entry.available = available;
+
+    
 
     // maintain theta for mispredictions
     if (Theta_counter[tid] > -0x7F) {
@@ -396,11 +418,22 @@ std::pair<int, int> BLBP::intervalFunc(unsigned num) {
 unsigned BLBP::addr_fold_btb(Addr br_addr) {
     unsigned ret = 0;
     // fold 64 bit to 6 bit
-    for (int i = 0; i < 11; ++i) {
+    for (int i = 0; i < 9; ++i) {
         ret = ret ^ (br_addr & 0x3f);
-        br_addr >>= 6;
+        br_addr >>= 7; // drop some bit
     }
     return ret & 0x3f;
+}
+
+unsigned BLBP::addr_to_tag(Addr br_addr) {
+    // do not use the lowest ones
+    br_addr >>= 10;
+    unsigned ret = 0;
+    for (int i = 0; i < 7; ++i) {
+        ret = ret + (br_addr & 0xff);
+        br_addr >>= 8;
+    }
+    return ret;
 }
 
 unsigned BLBP::history_to_entry(int predictor, ghrEntry &ghr) {
