@@ -305,13 +305,22 @@ decode QUADRANT default Unknown::unknown() {
         }
         0x4: decode CFUNCT1 {
             0x0: decode RC2 {
-                0x0: Jump::c_jr({{
-                    if (RC1 == 0) {
-                        fault = std::make_shared<IllegalInstFault>(
+                0x0: decode RC1 {
+                    0x1: Jump::c_real_ret({{
+                        if (RC1 == 0) {
+                            fault = std::make_shared<IllegalInstFault>(
                                 "source reg x0", machInst);
-                    }
-                    NPC = Rc1;
-                }}, IsIndirectControl, IsUncondControl, IsCall);
+                        }
+                        NPC = Rc1;
+                    }}, IsIndirectControl, IsUncondControl, IsReturn);
+                    default: Jump::c_jr({{
+                        if (RC1 == 0) {
+                            fault = std::make_shared<IllegalInstFault>(
+                                "source reg x0", machInst);
+                        }
+                        NPC = Rc1;
+                    }}, IsIndirectControl, IsUncondControl, IsCall);
+                }
                 default: CROp::c_mv({{
                     if (RC1 == 0) {
                         fault = std::make_shared<IllegalInstFault>(
@@ -329,14 +338,24 @@ decode QUADRANT default Unknown::unknown() {
                     fault = std::make_shared<BreakpointFault>(xc->pcState());
                 }}, IsSerializeAfter, IsNonSpeculative, No_OpClass);
                 default: decode RC2 {
-                    0x0: Jump::c_jalr({{
-                        if (RC1 == 0) {
-                            fault = std::make_shared<IllegalInstFault>(
+                    0x0: decode RC1 {
+                        0x1: Jump::c_ret({{
+                                if (RC1 == 0) {
+                                    fault = std::make_shared<IllegalInstFault>(
+                                        "source reg x0", machInst);
+                                }
+                                ra = NPC;
+                                NPC = Rc1;
+                            }}, IsIndirectControl, IsUncondControl, IsReturn);
+                        default: Jump::c_jalr({{
+                            if (RC1 == 0) {
+                                fault = std::make_shared<IllegalInstFault>(
                                     "source reg x0", machInst);
-                        }
-                        ra = NPC;
-                        NPC = Rc1;
-                    }}, IsIndirectControl, IsUncondControl, IsCall);
+                            }
+                            ra = NPC;
+                            NPC = Rc1;
+                        }}, IsIndirectControl, IsUncondControl, IsCall);
+                    }
                     default: CompressedROp::c_add({{
                         Rc1_sd = Rc1_sd + Rc2_sd;
                     }});
@@ -1341,10 +1360,19 @@ decode QUADRANT default Unknown::unknown() {
         }
 
         0x19: decode FUNCT3 {
-            0x0: Jump::jalr({{
-                Rd = NPC;
-                NPC = (imm + Rs1) & (~0x1);
-            }}, IsIndirectControl, IsUncondControl, IsCall);
+            0x0: decode RS1 {
+                0x1: decode IMM12 {
+                    0x0: Jump::ret({{
+                        Rd = NPC;
+                        NPC = (imm + Rs1) & (~0x1);
+                    }}, IsIndirectControl, IsUncondControl, IsReturn);
+                }
+                
+                default: Jump::jalr({{
+                    Rd = NPC;
+                    NPC = (imm + Rs1) & (~0x1);
+                }}, IsIndirectControl, IsUncondControl, IsCall);
+            }
         }
 
         0x1b: JOp::jal({{

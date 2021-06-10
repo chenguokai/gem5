@@ -103,7 +103,7 @@ buildRetPC(const PCState &curPC, const PCState &callPC)
 {
     PCState retPC = callPC;
     retPC.advance();
-    retPC.pc(curPC.npc());
+    // retPC.pc(curPC.npc());
     return retPC;
 }
 
