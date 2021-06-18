@@ -165,6 +165,7 @@ BPredUnit::predict(const StaticInstPtr &inst, const InstSeqNum &seqNum,
     // Now lookup in the BTB or RAS.
     if (pred_taken) {
         if (inst->isReturn()) {
+            DPRINTF(Branch, "Instruction at pc 0x%llx is a ret\n", pc.instAddr());
             ++stats.RASUsed;
             predict_record.wasReturn = true;
             // If it's a function return call, then look up the address
